@@ -1,0 +1,18 @@
+
+
+Building and Running
+====================
+
+1.)  Make sure the ../../data directory has the input and output files.
+2.)  Load CUDA 8.0 to compile for P100.  Code does work with CUDA 7.5 as well
+     but will issue a compiler warning about atomicAdd (can be safely ignored).
+     You need a C++11 compatible host compiler - any new gcc will do.
+3.)  Type 'make'
+4.)  Type 'make run' to run the original data set, or 'make run$' for $=1,2,3
+     to run the SKA data sets
+
+
+Environment Variables
+=====================
+
+None required
