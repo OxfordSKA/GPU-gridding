@@ -1,3 +1,11 @@
+This is an implementation of the w-projection gridding algorithm aimed at
+the P100 GPU architecture, as per the gridding optimisation challenge here --
+https://github.com/OxfordSKA/gridding_challenge. Gridding challenge reproduced
+below. 
+
+GRIDDING CHALLENGE
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 1. Background
 ================================================================================
 
