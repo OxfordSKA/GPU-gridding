@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, The University of Oxford
+ * Copyright (c) 2017-2018, The University of Oxford
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,27 +26,32 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "binary/oskar_binary.h"
-#include "check_value.h"
-#include "oskar_timer.h"
-#include "oskar_grid_weights.h"
-#include "oskar_grid_wproj.h"
-#include "oskar_grid_wproj_gpu.hpp"
-#include "read_kernel.h"
-#include "read_vis.h"
-#include "write_fits_cube.h"
-
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 /*===================================================================*/
 /*===================================================================*/
 /* Set this to 1 if calling a new version of the gridding function. */
 #define HAVE_NEW_VERSION 1
 /*===================================================================*/
 /*===================================================================*/
+
+#if HAVE_NEW_VERSION
+#include <cuda_runtime_api.h>
+#endif
+
+#include "binary/oskar_binary.h"
+#include "check_value.h"
+#include "oskar_timer.h"
+#include "oskar_grid_weights.h"
+#include "oskar_grid_wproj.h"
+#include "oskar_grid_wproj_tiled_cuda.h"
+#include "read_kernel.h"
+#include "read_vis.h"
+#include "rearrange_kernels.h"
+#include "write_fits_cube.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define FLT sizeof(float)
 #define DBL sizeof(double)
@@ -59,7 +64,7 @@ int main(int argc, char** argv)
     size_t num_skipped = 0, num_skipped_orig = 0;
     double norm_orig = 0.0;
 #if HAVE_NEW_VERSION
-    size_t num_skipped_new = 0;
+    size_t num_skipped_new = 0, rearranged_size = 0;
     double norm_new = 0.0;
 #endif
     oskar_Timer *tmr_grid_vis_orig = 0, *tmr_grid_vis_new = 0;
@@ -81,6 +86,11 @@ int main(int argc, char** argv)
     int *support = 0, conv_size_half = 0, num_w_planes = 0, oversample = 0;
     int grid_size = 0;
     double w_scale = 0.0, cellsize_rad = 0.0;
+#if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+    void *d_rearranged_kernels = 0, *rearranged_kernels = 0, *d_vis_grid = 0;
+    void *d_uu = 0, *d_vv = 0, *d_ww = 0, *d_vis_block = 0, *d_weight = 0;
+    int *d_support = 0, *d_kernel_start = 0, *kernel_start = 0;
+#endif
 
     /* Check that a test root name was given. */
     if (argc < 2)
@@ -238,6 +248,30 @@ int main(int argc, char** argv)
                     &num_skipped, (float*) weights_grid);
     }
 
+#if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+    /* Rearrange the kernel data and copy to device. */
+    kernel_start = (int*) calloc(num_w_planes, sizeof(int));
+    rearrange_kernels(num_w_planes, support, oversample, conv_size_half,
+            vis_precision, kernels, &rearranged_size,
+            &rearranged_kernels, kernel_start);
+    cudaMalloc((void**)&d_kernel_start, num_w_planes * sizeof(int));
+    cudaMalloc((void**)&d_rearranged_kernels, rearranged_size);
+    cudaMalloc((void**)&d_support, num_w_planes * sizeof(int));
+    cudaMalloc((void**)&d_uu, num_times_baselines * coord_element_size);
+    cudaMalloc((void**)&d_vv, num_times_baselines * coord_element_size);
+    cudaMalloc((void**)&d_ww, num_times_baselines * coord_element_size);
+    cudaMalloc((void**)&d_weight, num_times_baselines * vis_element_size);
+    cudaMalloc((void**)&d_vis_block, num_times_baselines * 2 * vis_element_size);
+    cudaMalloc((void**)&d_vis_grid, num_cells * 2 * vis_element_size);
+    cudaMemcpy(d_kernel_start, kernel_start, num_w_planes * sizeof(int),
+            cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rearranged_kernels, rearranged_kernels, rearranged_size,
+            cudaMemcpyHostToDevice);
+    cudaMemcpy(d_support, support, num_w_planes * sizeof(int),
+            cudaMemcpyHostToDevice);
+    cudaMemset(d_vis_grid, 0, num_cells * 2 * vis_element_size);
+#endif
+
     /* Loop over visibility blocks to generate the visibility grid. */
     if (!status) printf("Gridding visibilities...\n");
     for (i = 0; i < num_blocks; ++i)
@@ -286,56 +320,65 @@ int main(int argc, char** argv)
                     (const float*) weights_grid);
 
         /* Update new visibility grid. */
-        oskar_timer_resume(tmr_grid_vis_new);
         /*===================================================================*/
         /*===================================================================*/
         /* CALL THE REPLACEMENT GRIDDING FUNCTION HERE. */
-#if HAVE_NEW_VERSION
+#if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+        cudaMemcpy(d_uu, uu, block_size * coord_element_size,
+                cudaMemcpyHostToDevice);
+        cudaMemcpy(d_vv, vv, block_size * coord_element_size,
+                cudaMemcpyHostToDevice);
+        cudaMemcpy(d_ww, ww, block_size * coord_element_size,
+                cudaMemcpyHostToDevice);
+        cudaMemcpy(d_vis_block, vis_block, block_size * 2 * vis_element_size,
+                cudaMemcpyHostToDevice);
+        cudaMemcpy(d_weight, weight, block_size * vis_element_size,
+                cudaMemcpyHostToDevice);
+        oskar_timer_resume(tmr_grid_vis_new);
         if (vis_precision == OSKAR_DOUBLE)
             /* Define a new name and call the new function. */
-	    // double precision GPU version has not been implemented
-            oskar_grid_wproj_d(
-                    (size_t) num_w_planes,
-                    support,
+            oskar_grid_wproj_tiled_cuda_d(
+                    num_w_planes,
+                    d_support,
                     oversample,
-                    conv_size_half,
-                    (const double*) kernels,
-                    block_size,
-                    (const double*) uu,
-                    (const double*) vv,
-                    (const double*) ww,
-                    (const double*) vis_block,
-                    (const double*) weight,
+                    d_kernel_start,
+                    (const double*) d_rearranged_kernels,
+                    (int) block_size,
+                    (const double*) d_uu,
+                    (const double*) d_vv,
+                    (const double*) d_ww,
+                    (const double*) d_vis_block,
+                    (const double*) d_weight,
                     cellsize_rad,
                     w_scale,
                     grid_size,
                     &num_skipped_new,
                     &norm_new,
-                    (double*) vis_grid_new);
+                    (double*) d_vis_grid);
         else
             /* Define a new name and call the new function. */
-            oskar_grid_wproj_f_gpu(
-                    (size_t) num_w_planes,
-                    support,
+            oskar_grid_wproj_tiled_cuda_f(
+                    num_w_planes,
+                    d_support,
                     oversample,
-                    conv_size_half,
-                    (const float*) kernels,
-                    block_size,
-                    (const float*) uu,
-                    (const float*) vv,
-                    (const float*) ww,
-                    (const float*) vis_block,
-                    (const float*) weight,
+                    d_kernel_start,
+                    (const float*) d_rearranged_kernels,
+                    (int) block_size,
+                    (const float*) d_uu,
+                    (const float*) d_vv,
+                    (const float*) d_ww,
+                    (const float*) d_vis_block,
+                    (const float*) d_weight,
                     (float) cellsize_rad,
                     (float) w_scale,
                     grid_size,
                     &num_skipped_new,
                     &norm_new,
-                    (float*) vis_grid_new);
+                    (float*) d_vis_grid);
+        oskar_timer_pause(tmr_grid_vis_new);
 #endif
         /*===================================================================*/
         /*===================================================================*/
-        oskar_timer_pause(tmr_grid_vis_new);
 
         /* Update the reference visibility grid. */
         oskar_timer_resume(tmr_grid_vis_orig);
@@ -425,6 +468,19 @@ int main(int argc, char** argv)
 #endif
 
     /* Free memory. */
+#if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+    cudaFree(d_support);
+    cudaFree(d_rearranged_kernels);
+    cudaFree(d_kernel_start);
+    cudaFree(d_uu);
+    cudaFree(d_vv);
+    cudaFree(d_ww);
+    cudaFree(d_weight);
+    cudaFree(d_vis_block);
+    cudaFree(d_vis_grid);
+    free(rearranged_kernels);
+    free(kernel_start);
+#endif
     free(support);
     free(kernels_real);
     free(kernels_imag);

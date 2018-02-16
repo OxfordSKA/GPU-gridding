@@ -61,10 +61,12 @@ set(read_vis_SRC
     utils/oskar_grid_weights.c
     utils/read_kernel.c
     utils/read_vis.c
+    utils/rearrange_kernels.c
     utils/write_fits_cube.c
     gpu_support.cu
     oskar_grid_wproj.c
     oskar_grid_wproj_gpu.cu
+    oskar_grid_wproj_tiled_cuda.cu
     main.cpp
 )
 if (CUDA_FOUND)
