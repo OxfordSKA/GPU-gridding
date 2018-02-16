@@ -131,7 +131,7 @@ void write_fits_cube(int data_type, void* data, const char* root_name,
     if (oskar_type_is_complex(data_type))
     {
         void *temp;
-        const size_t num_elements = width * height;
+        const size_t num_elements = width * height * num_planes;
         temp = calloc(num_elements,
                 precision == OSKAR_DOUBLE ? sizeof(double) : sizeof(float));
 

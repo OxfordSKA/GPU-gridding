@@ -428,6 +428,11 @@ int main(int argc, char** argv)
 
     /* Compare visibility grids to check correctness. */
 #if HAVE_NEW_VERSION
+#ifdef OSKAR_HAVE_CUDA
+    /* Copy the grid to host memory. */
+    cudaMemcpy(vis_grid_new, d_vis_grid, num_cells * 2 * vis_element_size,
+            cudaMemcpyDeviceToHost);
+#endif
     if (!status)
     {
         printf("Checking grids...\n");

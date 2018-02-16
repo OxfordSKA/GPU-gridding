@@ -42,7 +42,6 @@ void rearrange_kernels(const int num_w_planes, const int* support,
         int* rearranged_kernel_start)
 {
     int w, j, k, off_u, off_v;
-    size_t element_size = 0;
     float2*  out_f;
     double2* out_d;
     const float2*  in_f = kernels_in;
@@ -59,8 +58,9 @@ void rearrange_kernels(const int num_w_planes, const int* support,
         rearranged_kernel_start[w] = (int) *rearranged_size;
         *rearranged_size += (width * height);
     }
-    element_size = (prec == OSKAR_SINGLE ? sizeof(float) : sizeof(double));
-    *kernels_out = realloc(*kernels_out, *rearranged_size * element_size);
+    *rearranged_size *= 2 * (prec == OSKAR_SINGLE ?
+            sizeof(float) : sizeof(double));
+    *kernels_out = realloc(*kernels_out, *rearranged_size);
     out_f = (float2*)  *kernels_out;
     out_d = (double2*) *kernels_out;
 
