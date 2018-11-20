@@ -324,6 +324,7 @@ int main(int argc, char** argv)
         /*===================================================================*/
         /* CALL THE REPLACEMENT GRIDDING FUNCTION HERE. */
 #if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+        printf("RUNNING TILE-BASED VERSION\n");
         cudaMemcpy(d_uu, uu, block_size * coord_element_size,
                 cudaMemcpyHostToDevice);
         cudaMemcpy(d_vv, vv, block_size * coord_element_size,
@@ -380,6 +381,7 @@ int main(int argc, char** argv)
         /*===================================================================*/
         /*===================================================================*/
 
+        printf("RUNNING REFERENCE VERSION\n");
         /* Update the reference visibility grid. */
         oskar_timer_resume(tmr_grid_vis_orig);
         if (vis_precision == OSKAR_DOUBLE)
@@ -433,40 +435,61 @@ int main(int argc, char** argv)
     cudaMemcpy(vis_grid_new, d_vis_grid, num_cells * 2 * vis_element_size,
             cudaMemcpyDeviceToHost);
 #endif
-    if (!status)
-    {
-        printf("Checking grids...\n");
-        if (vis_precision == OSKAR_DOUBLE)
+
+#if HAVE_NEW_VERSION && defined(OSKAR_HAVE_CUDA)
+    printf("CHECKING ERROR\n");
+    if (vis_precision == OSKAR_DOUBLE){
+        double* gridA = (double*)vis_grid_orig;
+        double* gridB = (double*)vis_grid_new;
+        double valAReal, valBReal, valAImag, valBImag;
+        double normReal=0, normImag=0;
+        double diffReal=0, diffImag=0;
+        double RMSErrorReal=0, RMSErrorImag=0;
+        double final_error;
+        for (j = 0; j < num_cells; ++j)
         {
-            const double* grid1 = (const double*)vis_grid_orig;
-            const double* grid2 = (const double*)vis_grid_new;
-            for (j = 0; j < num_cells; ++j)
-            {
-                if (!check_value_double(grid1[2*j], grid2[2*j]) ||
-                        !check_value_double(grid1[2*j + 1], grid2[2*j + 1]))
-                {
-                    fprintf(stderr, "Inconsistent grid values (cell %lu).\n",
-                            (unsigned long) j);
-                    break;
-                }
-            }
+            valAReal = gridA[2*j]; valAImag = gridA[2*j+1];
+            valBReal = gridB[2*j]; valBImag = gridB[2*j+1];
+            normReal += valAReal*valAReal;
+            normImag += valAImag*valAImag;
+
+            diffReal = valAReal - valBReal;
+            diffImag = valAImag - valBImag;
+            RMSErrorReal +=  diffReal*diffReal;
+            RMSErrorImag +=  diffImag*diffImag;
         }
-        else
+
+        final_error = sqrtf(RMSErrorReal+RMSErrorImag)/sqrtf(normReal+normImag);
+        printf("\nError: %.14f\n\n", final_error);
+
+    } else {
+        float* gridA = (float*)vis_grid_orig;
+        float* gridB = (float*)vis_grid_new;
+        float valAReal, valBReal, valAImag, valBImag;
+        float normReal=0, normImag=0;
+        float diffReal=0, diffImag=0;
+        float RMSErrorReal=0, RMSErrorImag=0;
+        float final_error;
+
+        for (j = 0; j < num_cells; ++j)
         {
-            const float* grid1 = (const float*)vis_grid_orig;
-            const float* grid2 = (const float*)vis_grid_new;
-            for (j = 0; j < num_cells; ++j)
-            {
-                if (!check_value_float(grid1[2*j], grid2[2*j]) ||
-                        !check_value_float(grid1[2*j + 1], grid2[2*j + 1]))
-                {
-                    fprintf(stderr, "Inconsistent grid values (cell %lu).\n",
-                            (unsigned long) j);
-                    break;
-                }
-            }
+            valAReal = gridA[2*j]; valAImag = gridA[2*j+1];
+            valBReal = gridB[2*j]; valBImag = gridB[2*j+1];
+            normReal += valAReal*valAReal;
+            normImag += valAImag*valAImag;
+
+            diffReal = valAReal - valBReal;
+            diffImag = valAImag - valBImag;
+            RMSErrorReal +=  diffReal*diffReal;
+            RMSErrorImag +=  diffImag*diffImag;
         }
+
+        final_error = sqrtf(RMSErrorReal+RMSErrorImag)/sqrtf(normReal+normImag);
+        printf("\nError: %.14f\n\n", final_error);
+
     }
+
+#endif
 
 #else
     printf("No new version of visibility grid to check.\n");
